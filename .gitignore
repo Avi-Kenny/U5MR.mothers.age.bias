@@ -38,3 +38,4 @@ vignettes/*.pdf
 # DHS data and shapefiles
 data/DHS
 data/shps
+U5MR.mothers.age.bias.Rproj
