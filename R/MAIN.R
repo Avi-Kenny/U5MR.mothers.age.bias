@@ -1,4 +1,4 @@
-# Title: "U5MR Time Bias"
+# Title: "U5MR Mother's Age Bias"
 # Author: Avi Kenny, Jon Wakefield
 
 
@@ -7,49 +7,36 @@
 ##### SETUP #####
 ################.
 
-# Set working directory
-if (Sys.getenv("USERDOMAIN")=="AVI-KENNY-T460") {
-  setwd("C:/Users/avike/OneDrive/Desktop/Avi/Biostats + Research/Research/Jon Wakefield/Project - U5MR Bias/z.u5mr.bias/R")
-} else {
-  setwd("z.u5mr.bias/R")
-}
-
 # Load packages
 {
-  library(simba) # devtools::install_github(repo="Avi-Kenny/simba")
-  library(magrittr)
-  library(dplyr)
-  library(SUMMER)
-  library(ggplot2)
-  library(patchwork)
-  library(rgdal)
-  library(readstata13)
-  library(INLA)
-  library(tidyr)
+  pkgs <- c("magrittr", "dplyr", "SUMMER", "ggplot2", "patchwork", "rgdal",
+            "readstata13", "INLA", "tidyr")
+  for (pkg in pkgs) { do.call("library", list(pkg)) }
 }
 
-# Load functions
+# Helper functions
 {
-  source("helpers.R")
-}
-
-# Set code blocks to run
-{
-  run_main <- TRUE
-}
-
-
-
-###############################################.
-##### MAIN: SUMMER smooth direct vignette #####
-###############################################.
-
-if (run_main) {
+  #' Convert dates (year+month) to CMC
+  #' @param year Calendar year
+  #' @param month Calendar month
+  #' @return Date in CMC format
+  dates_to_cmc <- function(year, month) {
+    12*(year-1900)+month
+  }
   
-  # https://cran.r-project.org/web/packages/SUMMER/vignettes/u5mr-vignette.html
-  # `dat` is a DF of birth data (one row per child-period)
-  # `direct0` is a DF of Horvitz-Thompson direct estimates of U5MR
-  
+  #' Convert CMC to dates (year+month)
+  #' @param cmc CMC-formatted date
+  #' @return Date in CMC format
+  #' @return A list containing:
+  #'     * `year`: calendar year
+  #'     * `month`: calendar month
+  cmc_to_dates <- function(cmc) {
+    month <- ifelse(mod(cmc, 12)!=0, mod(cmc, 12), 12)
+    return(list(
+      year = 1900 + (cmc-month)/12,
+      month = month
+    ))
+  }
 }
 
 
@@ -60,7 +47,9 @@ if (run_main) {
 
 if (run_main) {
   
-  load_data <- TRUE
+  # On first run, set this to FALSE. Later, set this to TRUE to speed things up
+  #     by reloading files so that they don't have to be recreated each time.
+  load_data <- FALSE
   
   if (load_data) {
     
@@ -82,7 +71,7 @@ if (run_main) {
     # MWBR7HFL.DTA    Malawi 2015-16
     
     # Read in DHS births data
-    filename <- "../data/DHS/KEBR71FL.DTA"
+    filename <- "../data/DHS/MWBR7HFL.DTA"
     births <- read.dta13(filename, generate.factors=TRUE)
     saveRDS(births, file="../data/births.rds")
     
@@ -99,14 +88,15 @@ if (run_main) {
       strata = "v023",
       variables = c("caseid","v001","v002","v004","v005","v008","v011","v012",
                     "v021","v022","v023","v024","v025","v139","bidx","b3"),
-      year.cut = seq(1978, 2013, by=5)
+      year.cut = seq(1980, 2015, by=5)
     )
     dat <- dat[, c("v001","v002","v008","v011","v012","v024","time","age",
                    "v005","strata","died","b3")]
-    colnames(dat) <- c("clustid","id","survey_date_cmc","dob_cmc","woman_age","region","time","age","weights","strata",
-                       "died","dob_child_cmc")
+    colnames(dat) <- c("clustid","id","survey_date_cmc","dob_cmc","woman_age",
+                       "region","time","age","weights","strata","died",
+                       "dob_child_cmc")
     dat %<>% mutate(
-      # !!!!! Can get more precise than this by using woman's CMC DOB
+      # Note: we can get more precise than this by using woman's CMC DOB
       woman_age_ab = round(woman_age-(survey_date_cmc-dob_child_cmc)/12)
     )
     dat %<>% mutate(
@@ -136,7 +126,7 @@ if (run_main) {
     dat %<>% filter(woman_age_ab_bin!="other")
     saveRDS(dat, file="../data/dat.rds")
     
-    # Get direct estimates using getDirect()
+    # Get direct estimates of U5MR
     years <- levels(dat$time)
     direct0 <- getDirect(
       births=dat, years=years, regionVar="region", timeVar="time",
@@ -161,72 +151,66 @@ if (run_main) {
   
   # !!!!! Skipped HIV adjustment for now; see vignette
   
-  # U5MR national
+  # 1. U5MR five-year direct estimates, Malawi
+  # Export: 4" x 6"
   ggplot(
     data = direct0 %>%
       mutate(years = factor(years, levels=levels(dat$time))),
     aes(x=years, y=mean, group=1)) +
     geom_line() + geom_point() +
     geom_ribbon(aes(ymin=lower, ymax=upper), alpha=0.2) +
-    labs(x="Years", y="U5MR")
+    labs(x="Years", y="U5MR",
+         title="1. U5MR five-year direct estimates, Malawi")
   
-  # U5MR national, by woman age group (at time of survey)
+  # 2. U5MR, by woman's age (at time of survey), Malawi
   # Filtered out one age group with huge CI
-  direct1_mod <- direct1 %>% mutate(subset="Age-specific")
-  direct1_all <- direct1_mod %>% filter(woman_age_bin=="All") %>%
+  # Export: 6" x 9"
+  plotdata_2 <- direct1 %>% mutate(subset="Age-specific")
+  plotdata_2b <- plotdata_2 %>% filter(woman_age_bin=="All") %>%
     mutate(subset="All")
-  direct1_mod %<>% filter(woman_age_bin!="All")
+  plotdata_2 %<>% filter(woman_age_bin!="All")
   for (bin in unique(direct1$woman_age_bin)) {
-    direct1_all2 <- direct1_all %>% mutate(woman_age_bin=bin)
-    direct1_mod <- rbind(direct1_mod, direct1_all2)
+    plotdata_2c <- plotdata_2b %>% mutate(woman_age_bin=bin)
+    plotdata_2 <- rbind(plotdata_2, plotdata_2c)
   }
+  plotdata_2 %<>% mutate(years = factor(years, levels=levels(dat$time))) %>%
+    filter(!(woman_age_bin=="25-29" & years=="95-99"))
   ggplot(
-    data = direct1_mod %>%
-      mutate(years = factor(years, levels=levels(dat$time))) %>%
-      filter(!(woman_age_bin=="25-29" & years=="93-97")),
+    data = plotdata_2,
     aes(x=years, y=mean, group=subset, color=subset)) +
     geom_line() + geom_point() +
     geom_ribbon(aes(ymin=lower, ymax=upper, fill=subset), alpha=0.2) +
     facet_wrap(~woman_age_bin, ncol=4) +
-    labs(x="Years", y="U5MR", fill="Subset",
-         color="Subset", title="U5MR, by woman's age (at time of survey)")
+    theme(axis.text.x = element_text(angle=45, vjust=1, hjust=1)) +
+    labs(x="Years", y="U5MR", fill="Subset", color="Subset",
+         title="U5MR, by woman's age (at time of survey), Malawi")
   
-  # U5MR national, by woman age group (at time of birth)
-  direct2_mod <- direct2 %>% mutate(subset="Age-specific")
-  direct2_all <- direct2_mod %>% filter(woman_age_ab_bin=="All") %>%
+  # 3. U5MR, by woman's age (at birth), Malawi
+  # Export: 6" x 9"
+  plotdata_3 <- direct2 %>% mutate(subset="Age-specific")
+  plotdata_3b <- plotdata_3 %>% filter(woman_age_ab_bin=="All") %>%
     mutate(subset="All")
-  direct2_mod %<>% filter(woman_age_ab_bin!="All")
+  plotdata_3 %<>% filter(woman_age_ab_bin!="All")
   for (bin in unique(direct2$woman_age_ab_bin)) {
-    direct2_all2 <- direct2_all %>% mutate(woman_age_ab_bin=bin)
-    direct2_mod <- rbind(direct2_mod, direct2_all2)
+    plotdata_3c <- plotdata_3b %>% mutate(woman_age_ab_bin=bin)
+    plotdata_3 <- rbind(plotdata_3, plotdata_3c)
   }
   ggplot(
-    data = direct2_mod %>%
+    data = plotdata_3 %>%
       mutate(years = factor(years, levels=levels(dat$time))) %>%
-      filter(years %in% c("98-02","03-07","08-12")) %>%
+      filter(years %in% c("00-04","05-09","10-14")) %>%
       filter(woman_age_ab_bin!="All"),
     aes(x=years, y=mean, group=subset, color=subset)) +
     geom_line() + geom_point() +
     geom_ribbon(aes(ymin=lower, ymax=upper, fill=subset), alpha=0.2) +
     facet_wrap(~woman_age_ab_bin, ncol=4) +
     labs(x="Years", y="U5MR", fill="Subset",
-         color="Subset", title="U5MR, by woman's age (at birth)")
+         color="Subset", title="U5MR, by woman's age (at birth), Malawi")
   
   # What percentage of deaths are in each age band (by time period)
-  dat_deaths <- dat %>% filter(died==1)
-  xtabs(~woman_age_ab_bin+time, data=dat_deaths, addNA=TRUE) %>% prop.table(2)
-  #                  time
-  # woman_age_ab_bin 78-82 83-87 88-92 93-97 98-02 03-07 08-12
-  #            10-14  0.58  0.13  0.09  0.05  0.05  0.03  0.01
-  #            15-19  0.42  0.71  0.38  0.28  0.23  0.21  0.19
-  #            20-24  0.00  0.16  0.46  0.40  0.32  0.27  0.27
-  #            25-29  0.00  0.00  0.08  0.24  0.25  0.21  0.21
-  #            30-34  0.00  0.00  0.00  0.04  0.14  0.18  0.17
-  #            35-39  0.00  0.00  0.00  0.00  0.01  0.08  0.09
-  #            40-44  0.00  0.00  0.00  0.00  0.00  0.01  0.04
-  #            45-49  0.00  0.00  0.00  0.00  0.00  0.00  0.00
-  
   # !!!!! Also do % of deaths
+  xtabs(~woman_age_ab_bin+time, data=filter(dat, died==1), addNA=TRUE) %>%
+    prop.table(2)
 
 }
 
@@ -243,10 +227,11 @@ if (run_main) {
   # Select dataset and set time range
   {
     country <- "Malawi"
-    # MWBR7HFL.DTA    Malawi 2015-16
-    # births <- read.dta13("../data/DHS/MWBR7HFL.DTA", generate.factors=TRUE)
-    births <- readRDS("../data/births_Malawi.rds")
-    
+    # # MWBR7HFL.DTA    Malawi 2015-16
+    # # births <- read.dta13("../data/DHS/MWBR7HFL.DTA", generate.factors=TRUE)
+    # births <- readRDS("../data/births_Malawi.rds")
+    # 
+    births2 <- births
     time_range <- c(1986:2015)
     time_blocks <- c("1986-1990", "1991-1995", "1996-2000", "2001-2005",
                      "2006-2010", "2011-2015")
@@ -258,9 +243,9 @@ if (run_main) {
     vars_to_keep = c("caseid","v001","v002","v005","v008","v011","v012",
                      "v024","v025","bidx","b2","b3","b5","b7")
     
-    births %<>% subset(select=vars_to_keep)
+    births2 %<>% subset(select=vars_to_keep)
     
-    births %<>% rename(
+    births2 %<>% rename(
       "clustid" = v001,
       "hhid" = v002,
       "weights" = v005,
@@ -268,7 +253,7 @@ if (run_main) {
       "dob_cmc" = v011,
       "age" = v012,
       "region" = v024,
-      "ur" = v025,
+      "rural" = v025,
       "birth_col_num" = bidx,
       "child_birth_year" = b2,
       "child_dob_cmc" = b3,
@@ -277,8 +262,9 @@ if (run_main) {
       # Defaults omitted: "ultimate_area_unit" = v004, "psu" = v021, "sample_strata" = v022, "stratification_design" = v023, "region2" = v139
     )
     
-    births %<>% mutate(
-      neo_death = ifelse(child_age_at_death==0, 1, 0),
+    births2 %<>% mutate(
+      rural = as.numeric(rural=="rural"),
+      neo_death = as.numeric(child_age_at_death==0, 1, 0),
       time_5yr = case_when(
         child_birth_year %in% time_range[1:5] ~ time_blocks[1],
         child_birth_year %in% time_range[6:10] ~ time_blocks[2],
@@ -289,16 +275,16 @@ if (run_main) {
         child_birth_year %in% c((time_range[1]-100):(time_range[1]-1)) ~ "other"
       )
     )
-    births$neo_death <- replace_na(births$neo_death, 0)
-    births %<>% filter(time_5yr!="other")
+    births2$neo_death <- replace_na(births2$neo_death, 0)
+    births2 %<>% filter(time_5yr!="other")
     
-    births %<>% mutate(
+    births2 %<>% mutate(
       # !!!!! Can get more precise than this by using woman's CMC DOB
       woman_age_ab = round(age-(survey_date_cmc-child_dob_cmc)/12)
     )
     age_bins <- c("10-14", "15-19", "20-24", "25-29", "30-34", "35-39",
                   "40-44", "45-49")
-    births %<>% mutate(
+    births2 %<>% mutate(
       woman_age_ab_bin = case_when(
         woman_age_ab >= 10 & woman_age_ab <= 14 ~ age_bins[1],
         woman_age_ab >= 15 & woman_age_ab <= 19 ~ age_bins[2],
@@ -311,10 +297,12 @@ if (run_main) {
         woman_age_ab < 10 | woman_age_ab > 49 ~ "other"
       )
     )
-    births %<>% filter(woman_age_ab_bin!="other")
+    
+    # Check: should be 0
+    print(nrow(births2 %>% filter(woman_age_ab_bin=="other")))
     
     # Convert characters to factors
-    births %<>% mutate(
+    births2 %<>% mutate(
       time_5yr = factor(time_5yr, levels=time_blocks),
       woman_age_ab_bin = factor(woman_age_ab_bin, levels=age_bins)
     )
@@ -323,25 +311,27 @@ if (run_main) {
   
   # Calculate summary dataframes
   {
-    summ_1 <- births %>% group_by(child_birth_year) %>%
+    summ_1 <- births2 %>% group_by(child_birth_year) %>%
       summarize(births=n(), deaths=sum(neo_death)) %>%
       mutate(nmr_direct=deaths/births)
     
-    summ_2 <- births %>% group_by(time_5yr, woman_age_ab_bin) %>%
+    summ_2 <- births2 %>% group_by(time_5yr, woman_age_ab_bin, rural) %>%
       summarize(births=n(), deaths=sum(neo_death)) %>%
       mutate(nmr_direct=deaths/births)
     
-    summ_3 <- births %>% group_by(time_5yr) %>%
+    summ_3 <- births2 %>% group_by(time_5yr, rural) %>%
       summarize(births=n(), deaths=sum(neo_death)) %>%
       mutate(nmr_direct=deaths/births)
     
-    summ_4 <- births %>% group_by(child_birth_year, woman_age_ab_bin) %>%
+    summ_4 <- births2 %>%
+      group_by(child_birth_year, woman_age_ab_bin, rural) %>%
       summarize(births=n(), deaths=sum(neo_death)) %>%
       mutate(nmr_direct=deaths/births)
   }
   
   # NMR: yearly vs. smoothed
   {
+    # Created smoothed direct annual estimates
     model_1 <- inla(
       deaths ~ 1 + f(child_birth_year, model="rw2"),
       family = "binomial",
@@ -353,7 +343,8 @@ if (run_main) {
     
     summ_1$nmr_smoothed <- model_1$summary.fitted.values[,1]
     
-    # Export: 600x400
+    # 4. Neonatal mortality rates, Malawi
+    # Export: 4" x 6"
     ggplot(
       data.frame(
         x = rep(summ_1$child_birth_year, 2),
@@ -363,7 +354,7 @@ if (run_main) {
       aes(x=x, y=y, group=type, color=type)
     ) +
       geom_line() +
-      labs(title=paste0("Neonatal mortality rates (",country,")"), x="Year",
+      labs(title=paste0("Neonatal mortality rates, ",country), x="Year",
            y="NMR", color="Type", group="Type")
     
   }
@@ -375,10 +366,11 @@ if (run_main) {
   
   # New model
   {
-    # Calculate crosstab to show selection bias issue and fill missing values
+    # Calculate crosstab to fill missing values
     crosstab <- xtabs(~time_5yr+woman_age_ab_bin, data=summ_2, addNA=T)
     
     # Augment births_summ_2 with "missing values" for INLA prediction
+    # Assumes crosstab is the same for urban/rural
     summ_2_aug <- summ_2
     for (time in unique(summ_2$time_5yr)) {
       for (age in unique(summ_2$woman_age_ab_bin)) {
@@ -386,7 +378,11 @@ if (run_main) {
           summ_2_aug <- rbind(
             as.data.frame(summ_2_aug),
             data.frame(time_5yr=time, woman_age_ab_bin=age, births=NA,
-                       deaths=NA, nmr_direct=NA, stringsAsFactors=FALSE)
+                       deaths=NA, rural=0, nmr_direct=NA,
+                       stringsAsFactors=FALSE),
+            data.frame(time_5yr=time, woman_age_ab_bin=age, births=NA,
+                       deaths=NA, rural=1, nmr_direct=NA,
+                       stringsAsFactors=FALSE)
           )
         }
       }
@@ -394,80 +390,163 @@ if (run_main) {
     
     # Run INLA model to get smoothed estimates over woman's age and time
     model_2 <- inla(
-      deaths ~ 1 + f(time_5yr, model="rw2") + f(woman_age_ab_bin, model="rw2"),
+      deaths ~ 1 + f(time_5yr, model="rw2") + f(woman_age_ab_bin, model="rw2") +
+                   rural,
       family = "binomial",
       Ntrials = births,
       control.family = list(link="logit"),
-      control.predictor=list(compute=TRUE, link=1),
+      control.predictor = list(compute=TRUE, link=1),
       data = summ_2_aug
     )
     summ_2_aug$nmr_smoothed <- model_2$summary.fitted.values[,1]
     
+    # !!!!! Plot smoothed vs actual
+    
     # Calculate "gamma" values (method 1)
     # !!!!! Note: "2006-2010" is survey/country-specific
     birth_probs1 <- summ_2_aug %>% filter(time_5yr=="2006-2010") %>%
-      subset(select=c(woman_age_ab_bin,births)) %>%
+      subset(select=c(woman_age_ab_bin,rural,births)) %>%
       mutate(births=ifelse(is.na(births),0,births))
-    birth_probs1 %<>% mutate(prob_m1=births/sum(birth_probs1$births, na.rm=T)) %>%
+    births_rural <- sum(birth_probs1$births[birth_probs1$rural==1])
+    births_urban <- sum(birth_probs1$births[birth_probs1$rural==0])
+    birth_probs1 %<>% mutate(
+      gamma_m1=births/(ifelse(rural==1,births_rural,births_urban))
+    ) %>%
       subset(select=-births)
     
-    # Calculate "gamma" values (method 2; INLA model + average over time)
-    model_2 <- inla(
-      births ~ 1 + f(time_5yr, model="rw2") + f(woman_age_ab_bin, model="rw2"),
-      family = "poisson",
-      control.family = list(link="log"),
-      control.predictor=list(compute=TRUE, link=1),
-      data = summ_2_aug
-    )
-    summ_2_aug$births_smoothed <- round(model_2$summary.fitted.values[,1])
+    # A few transformations of summ_2_aug
+    summ_2_aug$id <- c(1:nrow(summ_2_aug))
+    summ_2_aug_urban <- filter(summ_2_aug, rural==0)
+    summ_2_aug_rural <- filter(summ_2_aug, rural==1)
     
-    # Smoothed; constant over time
-    birth_probs2 <- summ_2_aug %>% group_by(woman_age_ab_bin) %>%
-      summarize(births=round(sum(births_smoothed)))
-    birth_probs2 %<>% mutate(prob_m2=births/sum(birth_probs2$births)) %>%
-      subset(select=-births)
+    # Calculate "gamma" values (method 2; INLA model)
+    {
+      model_2bi <- inla(
+        births ~ 1 + f(time_5yr, model="rw1") + f(woman_age_ab_bin, model="rw1") +
+                     rural,
+        family = "poisson",
+        control.family = list(link="log"),
+        control.predictor = list(compute=TRUE, link=1),
+        data = summ_2_aug
+      )
+      summ_2_aug$births_smoothed_i <- round(model_2bi$summary.fitted.values[,1])
+      
+      model_2bii_urban <- inla(
+        births ~ 1 + f(time_5yr, model="rw1") + f(woman_age_ab_bin, model="rw1"),
+        family = "poisson",
+        control.family = list(link="log"),
+        control.predictor = list(compute=TRUE, link=1),
+        data = summ_2_aug_urban
+      )
+      model_2bii_rural <- inla(
+        births ~ 1 + f(time_5yr, model="rw1") + f(woman_age_ab_bin, model="rw1"),
+        family = "poisson",
+        control.family = list(link="log"),
+        control.predictor = list(compute=TRUE, link=1),
+        data = summ_2_aug_rural
+      )
+      df_temp <- data.frame(
+        id = c(summ_2_aug_urban$id, summ_2_aug_rural$id),
+        v = c(round(model_2bii_urban$summary.fitted.values[,1]),
+              round(model_2bii_rural$summary.fitted.values[,1]))
+      )
+      summ_2_aug$births_smoothed_ii <- (arrange(df_temp, id))$v
+      
+    }
     
     # Smoothed; changes over time
-    yearly_total_births <- summ_2_aug %>% group_by(time_5yr) %>%
-      summarize(births_total=sum(births_smoothed))
-    summ_2_aug <- inner_join(summ_2_aug, yearly_total_births, by="time_5yr")
-    summ_2_aug %<>% mutate(prob_m3=births_smoothed/births_total)
-    summ_2_aug %<>% inner_join(birth_probs2, by="woman_age_ab_bin")
-    summ_2_aug %<>% inner_join(birth_probs1, by="woman_age_ab_bin")
-
-    # Export: 600x400
+    if (FALSE) { # !!!!! temporarily skip this
+      yearly_total_births <- summ_2_aug %>% group_by(time_5yr, rural) %>%
+        summarize(births_total=sum(births_smoothed))
+      summ_2_aug <- inner_join(summ_2_aug, yearly_total_births,
+                               by=c("time_5yr", "rural"))
+      summ_2_aug %<>% mutate(gamma_m2=births_smoothed/births_total)
+      summ_2_aug %<>% inner_join(birth_probs1, by=c("woman_age_ab_bin","rural"))
+    }
+    summ_2_aug %<>% mutate(rural_ch=ifelse(rural==1, "rural", "urban"))
+    
+    # !!!!! START TEMP PLOT
     ggplot(
       data.frame(
         x = rep(summ_2_aug$time_5yr, 3),
-        y = c(summ_2_aug$prob_m1, summ_2_aug$prob_m2, summ_2_aug$prob_m3),
+        y = c(summ_2_aug$births, summ_2_aug$births_smoothed_i, summ_2_aug$births_smoothed_ii),
         age = rep(summ_2_aug$woman_age_ab_bin, 3),
-        method = rep(c("Method 1", "Method 2", "Method 3"), each=nrow(summ_2_aug))
+        rural_ch = rep(summ_2_aug$rural_ch, 3),
+        method = rep(c("Observed", "Smoothed (rw1)", "Smoothed (rw1; separate urban/rural)"),
+                     each=nrow(summ_2_aug))
       ),
       aes(x=x, y=y, group=age, color=age)
     ) +
       geom_line() +
-      facet_wrap(~method) +
-      labs(title=paste0("Probability of birth over mother's age (",country,")"),
-           x="Year", y="Probability", color="Type", group="Type") +
-      theme(axis.text.x = element_text(angle=45, vjust=1, hjust=1))
+      facet_grid(rows=vars(rural_ch), cols=vars(method), scales="free_y") +
+      labs(title=paste0("Number of births, by mother's age (smoothed vs. obser",
+                        "ved), ", country),
+           x="Year", y="Number of births", color="Group", group="Age bin") +
+      theme(axis.text.x = element_text(angle=45, vjust=1, hjust=1)) +
+      scale_color_manual(values=c("turquoise","salmon","orange","darkblue",
+                                  "green3","darkorchid2","black","red"))
+    # !!!!! END TEMP PLOT
+    
+    
+    # 5b. Number of births, by mother's age (smoothed vs. observed), Malawi
+    ggplot(
+      data.frame(
+        x = rep(summ_2_aug$time_5yr, 2),
+        y = c(summ_2_aug$births, summ_2_aug$births_smoothed),
+        age = rep(summ_2_aug$woman_age_ab_bin, 2),
+        rural_ch = rep(summ_2_aug$rural_ch, 2),
+        method = rep(c("Observed", "Smoothed"),
+                     each=nrow(summ_2_aug))
+      ),
+      aes(x=x, y=y, group=age, color=age)
+    ) +
+      geom_line() +
+      facet_grid(rows=vars(rural_ch), cols=vars(method), scales="free_y") +
+      labs(title=paste0("Number of births, by mother's age (smoothed vs. obser",
+                        "ved), ", country),
+           x="Year", y="Number of births", color="Group", group="Age bin") +
+      theme(axis.text.x = element_text(angle=45, vjust=1, hjust=1)) +
+      scale_color_manual(values=c("turquoise","salmon","orange","darkblue",
+                                  "green3","darkorchid2","black","red"))
+    
+    # 5. Probability of birth, by mother's age (gamma), Malawi
+    # Export: 6" x 9"
+    ggplot(
+      data.frame(
+        x = rep(summ_2_aug$time_5yr, 2),
+        y = c(summ_2_aug$gamma_m1, summ_2_aug$gamma_m2),
+        age = rep(summ_2_aug$woman_age_ab_bin, 2),
+        rural_ch = rep(summ_2_aug$rural_ch, 2),
+        method = rep(c("Method 1", "Method 2"),
+                     each=nrow(summ_2_aug))
+      ),
+      aes(x=x, y=y, group=age, color=age)
+    ) +
+      geom_line() +
+      facet_grid(rows=vars(method), cols=vars(rural_ch)) +
+      labs(title=paste0("Probability of birth, by mother's age (gamma), ",
+           country), x="Year", y="Probability", color="Group", group="Age bin") +
+      theme(axis.text.x = element_text(angle=45, vjust=1, hjust=1)) +
+      scale_color_manual(values=c("turquoise","salmon","orange","darkblue",
+                                  "green3","darkorchid2","black","red"))
     
     # Calculate "corrected" NMR estimates
     summ_2_aug %<>% mutate(
-      nmr_t_m1 = nmr_smoothed * prob_m1,
-      nmr_t_m3 = nmr_smoothed * prob_m3
+      nmr_t_m1 = nmr_smoothed * gamma_m1,
+      nmr_t_m2 = nmr_smoothed * gamma_m2
     )
     
     df_corrected <- summ_2_aug %>% group_by(time_5yr) %>% summarize(
       nmr_m1 = sum(nmr_t_m1),
-      nmr_m3 = sum(nmr_t_m3)
+      nmr_m2 = sum(nmr_t_m2)
     )
     
     summ_3$nmr_corrected_m1 <- df_corrected$nmr_m1
-    summ_3$nmr_corrected_m3 <- df_corrected$nmr_m3
+    summ_3$nmr_corrected_m2 <- df_corrected$nmr_m2
     
     # Add smoothed estimates (over time only) to births_summ_3
     model_3 <- inla(
-      deaths ~ 1 + f(time_5yr, model="rw2"),
+      deaths ~ 1 + f(time_5yr, model="rw2") + rural,
       family = "binomial",
       Ntrials = births,
       control.family = list(link="logit"),
@@ -476,18 +555,19 @@ if (run_main) {
     )
     summ_3$nmr_smoothed <- model_3$summary.fitted.values[,1]
     
-    # Export: 600x400
+    # 6. Neonatal mortality rates (three methods), Malawi
+    # Export: 4" x 6"
     ggplot(
       data.frame(
         x = rep(summ_3$time_5yr, 3),
-        y = c(summ_3$nmr_direct, summ_3$nmr_smoothed, summ_3$nmr_corrected_m3),
+        y = c(summ_3$nmr_direct, summ_3$nmr_smoothed, summ_3$nmr_corrected_m2),
         type = rep(c("direct", "smoothed", "corrected"), each=6)
       ),
       aes(x=x, y=y, group=type, color=type)
       ) +
       geom_line() +
-      labs(title=paste0("Neonatal mortality rates (",country,")"), x="Year",
-           y="NMR", color="Type", group="Type") +
+      labs(title=paste0("Neonatal mortality rates (three methods), ",country),
+           x="Year", y="NMR", color="Type", group="Type") +
       theme(axis.text.x = element_text(angle=45, vjust=1, hjust=1))
     
   }
@@ -503,21 +583,23 @@ if (run_main) {
       "births_total" = births.y,
     ) %>% mutate(prop_of_year_births = births/births_total)
     
-    # Export: 600x400
+    # 7. Annual proportion of births in each mother's age bin, Malawi
+    # Export: 4" x 6"
     ggplot(
       summ_4,
       aes(x=child_birth_year, y=prop_of_year_births, group=woman_age_ab_bin,
           color=woman_age_ab_bin)
     ) +
       geom_line() +
-      scale_color_manual(values=c("turquoise", "salmon", "dodgerblue2", "green3", 
-                                  "darkorchid2", "orange", "red", "black")) +
+      scale_color_manual(
+        values=c("turquoise", "salmon", "dodgerblue2", "green3", "darkorchid2",
+                 "orange", "red", "black")) +
       labs(
-        title=paste0("Annual proportion of births in each mother's age bin (",
-          country,")"), x="Year", y="Proportion", color="Mother's age at birth",
+        title=paste0("Annual proportion of births in each mother's age bin, ",
+          country), x="Year", y="Proportion", color="Mother's age at birth",
         group="Mother's age at birth"
       )
-      
+    
   }
 
 }
@@ -529,6 +611,8 @@ if (run_main) {
 ##################################################.
 
 if (FALSE) {
+  
+  # ?????
   
   # RW2 smoothed direct model (national)
   fit0 <- smoothDirect(
